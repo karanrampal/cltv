@@ -1,0 +1,8 @@
+env_name: "customersegmentation-d-15ad"
+out_dir: "../output"
+num_workers: 2
+cores: 1
+chains: 2
+draws: 64
+tune: 4
+time_step: 8
