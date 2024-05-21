@@ -1,0 +1,15 @@
+# System related
+pyyaml
+# Scipy stack
+numpy
+matplotlib
+pandas
+# GCP
+google-cloud-bigquery
+google-cloud-secret-manager
+db-dtypes
+# cltv
+lifetimes
+pymc-marketing
+# Others
+tqdm

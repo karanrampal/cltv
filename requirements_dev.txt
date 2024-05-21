@@ -1,0 +1,19 @@
+-r requirements.txt
+# System related
+build
+types-pyyaml
+ipykernel
+ipywidgets
+# GCP
+google-cloud-aiplatform
+google-cloud-pipeline-components
+kfp
+# Testing
+pytest
+pytest-cov
+pytest-mock
+# Formatiing, linting
+mypy
+pylint
+black
+isort
