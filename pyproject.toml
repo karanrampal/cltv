@@ -2,7 +2,7 @@
 name = "cltv"
 dynamic = ["version"]
 authors = [
-  { name="Karan Rampal", email="karan.rampal@hm.com" },
+  { name="Karan Rampal", email="karanrampal87@gmail.com" },
 ]
 description = "Customer lifetime value prediction"
 readme = "README.md"
@@ -26,8 +26,8 @@ dependencies = [
 ]
 
 [project.urls]
-"Homepage" = "https://github.com/hm-group/cltv"
-"Bug Tracker" = "https://github.com/hm-group/cltv/issues"
+"Homepage" = "https://github.com/karanrampal/cltv"
+"Bug Tracker" = "https://github.com/karamrampal/cltv/issues"
 
 [build-system]
 requires = ["setuptools>=61.0"]
