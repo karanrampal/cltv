@@ -1,0 +1,89 @@
+WITH tmp AS (
+    SELECT
+        customer_brand_id,
+        DATE(sales_date) AS sales_day,
+        (demdel_net_price_fcc - return_net_price_fcc) AS sales_net_price
+    FROM __table_name__
+    WHERE sales_date IS NOT NULL
+    AND demdel_net_price_fcc IS NOT NULL
+),
+day AS (
+    SELECT
+        customer_brand_id,
+        sales_day,
+        SUM(sales_net_price) AS net_price
+    FROM tmp
+    GROUP BY customer_brand_id, sales_day
+),
+first_price AS (
+    SELECT
+        *,
+        FIRST_VALUE(net_price) OVER(PARTITION BY customer_brand_id ORDER BY sales_day ASC) AS fp
+    FROM day
+),
+res AS (
+    SELECT
+        customer_brand_id,
+        MIN(sales_day) AS first_p,
+        MAX(sales_day) AS last_p,
+        COUNT(sales_day) AS cnt,
+        SUM(net_price) AS mv,
+        MIN(fp) AS fp
+    FROM first_price
+    GROUP BY customer_brand_id
+    HAVING cnt > 1
+),
+max_date AS (
+    SELECT *, MAX(last_p) OVER () AS cur
+    FROM res
+),
+sub AS (
+    SELECT
+        customer_brand_id,
+        cnt - 1 AS frequency,
+        DATE_DIFF(last_p, first_p, DAY) AS recency,
+        DATE_DIFF(cur, first_p, DAY) AS T,
+        (mv - fp) AS val
+    FROM max_date
+),
+semi_final AS (
+    SELECT *
+    FROM sub
+    WHERE val > 0
+),
+cbi AS (
+    SELECT DISTINCT
+        customer_brand_id,
+        FIRST_VALUE(business_partner_id) OVER (PARTITION BY customer_brand_id ORDER BY is_golden_record DESC) AS business_partner_id,
+        FIRST_VALUE(country_rk) OVER (PARTITION BY customer_brand_id ORDER BY is_golden_record DESC) AS country_rk,
+        FIRST_VALUE(corporate_brand_rk) OVER (PARTITION BY customer_brand_id ORDER BY is_golden_record DESC) AS corporate_brand_rk,
+        FIRST_VALUE(currency_rk) OVER (PARTITION BY customer_brand_id ORDER BY is_golden_record DESC) AS currency_rk,
+    FROM __table_name__
+    WHERE currency_rk IS NOT NULL
+),
+final AS (
+    SELECT
+        a.customer_brand_id,
+        b.business_partner_id,
+        b.country_rk,
+        b.corporate_brand_rk,
+        b.currency_rk,
+        a.frequency,
+        a.recency,
+        a.T,
+        a.val
+    FROM semi_final AS a
+    LEFT JOIN cbi AS b
+        ON a.customer_brand_id = b.customer_brand_id
+)
+SELECT
+    customer_brand_id AS customer_id,
+    business_partner_id,
+    country_rk,
+    corporate_brand_rk,
+    currency_rk,
+    CAST(frequency AS FLOAT64) AS frequency,
+    recency,
+    T,
+    CAST(val/frequency AS FLOAT64) AS mean_transaction_value
+FROM final
