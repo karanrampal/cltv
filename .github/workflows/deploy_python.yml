@@ -1,0 +1,89 @@
+name: Deploy Python src
+
+on:
+  workflow_dispatch:
+
+env:
+  ENV_TARGET: ""
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  extract-environment-name:
+    name: Extract environment name
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set env vars
+        run: |
+          if [[ "${GITHUB_REF_NAME}" == "main" ]] || [[ "${GITHUB_REF_NAME}" == "master" ]]
+          then
+            echo "ENV_TARGET=prod" >> $GITHUB_ENV
+            echo "TFVARS_FILE=_prod.tfvars" >> $GITHUB_ENV
+          elif [[ ${GITHUB_REF} == *"integration"* ]]
+          then
+            echo "ENV_TARGET=test" >> $GITHUB_ENV
+            echo "TFVARS_FILE=_test.tfvars" >> $GITHUB_ENV
+          else
+            echo "ENV_TARGET=development" >> $GITHUB_ENV
+            echo "TFVARS_FILE=_dev.tfvars" >> $GITHUB_ENV
+          fi
+    outputs:
+      environment: ${{ env.ENV_TARGET }}
+      tfvars: ${{ env.TFVARS_FILE }}
+
+  deploy:
+    permissions:
+       contents: "read"
+       id-token: "write"
+    name: Upload image and deploy cloud run
+    needs:
+      - extract-environment-name
+    runs-on: ubuntu-latest
+    environment: ${{ needs.extract-environment-name.outputs.environment }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - id: auth
+        name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          token_format: access_token
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.WIF_ACCOUNT }}
+
+      - name: Login to Registry
+        uses: docker/login-action@v3
+        with:
+          registry: europe-west1-docker.pkg.dev
+          username: oauth2accesstoken
+          password: ${{ steps.auth.outputs.access_token }}
+
+      - name: Build and upload cltv image to Artifact Registry
+        shell: bash
+        run: |
+          docker build -f Dockerfile \
+            -t europe-west1-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/api-store/cltv:latest . \
+            --build-arg GAR_ACCESS_TOKEN=${{ steps.auth.outputs.access_token }}
+          docker push europe-west1-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/api-store/cltv:latest
+      
+      - name: Install cltv dependencies
+        run: make install_ci
+
+      - name: Run cltv kfp pipeline
+        run: |
+          python ./src/pipeline.py \
+            --env-name ${{ vars.GCP_PROJECT_ID }} \
+            --bucket-name ${{ vars.CLTV_BUCKET_NAME }} \
+            --compile-only
+      
+      - id: upload
+        name: Upload cltv pipeline yml to bucket
+        uses: google-github-actions/upload-cloud-storage@v2
+        with:
+          path: ./pipelines/cltv_pipeline.yml
+          destination: ${{ vars.CLTV_BUCKET_NAME }}
