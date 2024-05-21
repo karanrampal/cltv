@@ -1,0 +1,43 @@
+name: Release version
+on:
+  push:
+    branches: [ master, "support/*"]
+  workflow_dispatch:
+jobs:
+  update_version:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    name: Update version in repository
+    outputs:
+      version: ${{ steps.gitversion.outputs.fullSemVer }}
+      commit: ${{ steps.push.outputs.commit }}
+    steps:
+      - name: Install GitVersion
+        uses: GitTools/actions/gitversion/setup@v1.1.1
+        with:
+          versionSpec: '5.x'
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine Version
+        id: gitversion
+        uses: GitTools/actions/gitversion/execute@v1.1.1
+        with:
+          useConfigFile: true
+          configFilePath: GitVersion.yml
+
+      - name: Generate release!
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.request('POST /repos/{owner}/{repo}/releases', {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: 'v${{ steps.gitversion.outputs.fullSemVer }}',
+              target_commitish: '${{ github.sha }}',
+              generate_release_notes: true,
+            })
