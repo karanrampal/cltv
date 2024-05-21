@@ -1,0 +1,113 @@
+name: Create and/or Update and validate Infrastructure
+
+on:
+  workflow_dispatch:
+
+# We don't want parallel deployments.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Environment variables needed only by the workflow.
+  VALIDATOR_VERSION: "0.9.1"
+
+jobs:
+  # Job that will dynamically set github actions environment based on the branches.
+  extract-environment-name:
+    name: Extract environment name
+    # Define environment variables for this job.
+    env:
+      ENV_NAME: ""
+      TFVARS_FILE: ""
+      TFBACKEND_FILE: ""
+      TF_ALWAYS_DEV: "true" # set to true if *any* non-prod/test branch shall map to dev environment
+    runs-on: ubuntu-latest
+    steps:
+      # Set environment and read secret values.
+      - name: Set env vars
+        run: |
+          if [[ "${GITHUB_REF_NAME}" == "main" ]] || [[ "${GITHUB_REF_NAME}" == "master" ]]
+          then
+            echo "ENV_NAME=prod" >> $GITHUB_ENV
+            echo "TFVARS_FILE=_prod.tfvars" >> $GITHUB_ENV
+          elif [[ "${GITHUB_REF_NAME}" == "integration" ]]
+          then
+            echo "ENV_NAME=test" >> $GITHUB_ENV
+            echo "TFVARS_FILE=_test.tfvars" >> $GITHUB_ENV
+          elif [[ "${TF_ALWAYS_DEV}" == "true" ]] || [[ "${GITHUB_REF_NAME}" == "develop" ]] || [[ "${GITHUB_REF_NAME}" == "development" ]]
+          then
+            echo "ENV_NAME=development" >> $GITHUB_ENV
+            echo "TFVARS_FILE=_dev.tfvars" >> $GITHUB_ENV
+          fi
+    # Set outputs from environment variables set in steps.
+    outputs:
+      environment: ${{ env.ENV_NAME }}
+      tfvars: ${{ env.TFVARS_FILE }}
+
+  deploy:
+    permissions:
+      contents: read
+      id-token: write
+
+    name: Deployment
+    needs:
+      - extract-environment-name
+    # Read environment from previous job.
+    environment: ${{ needs.extract-environment-name.outputs.environment }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Pull code into container 📋
+        uses: actions/checkout@v4
+
+      - id: auth
+        name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: 'projects/550315766584/locations/global/workloadIdentityPools/cicd/providers/github'
+          service_account: ${{ vars.WIF_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+
+      - name: Initialize terraform 🎬
+        working-directory: ./src/terraform
+        shell: sh
+        run: |
+          terraform init \
+          -backend-config="bucket=${{ vars.BUCKET_NAME }}" \
+          -backend-config="prefix=infrastructure/state"
+        env:
+          GH_TOKEN: ${{ secrets.GH_token }}
+          GIT_SSH_COMMAND: "echo '${{ secrets.GH_SSH_PRIVATE_KEY }}' > id_rsa && ssh-keyscan github.com > known_hosts && chmod 600 id_rsa known_hosts && ssh -i ./id_rsa -o UserKnownHostsFile=./known_hosts"
+
+      - name: Validate terraform files 🔍
+        working-directory: ./src/terraform
+        shell: sh
+        run: |
+          terraform validate
+
+      - name: Check format of terraform files 🔍
+        working-directory: ./src/terraform
+        shell: sh
+        run: |
+          terraform fmt -check
+
+      - name: Plan terraform changes 📝
+        working-directory: ./src/terraform
+        shell: sh
+        run: |
+          terraform plan -var-file=${{ needs.extract-environment-name.outputs.tfvars }}  -out=plan.tfplan
+
+      - name: Apply terraform changes 🌳
+        working-directory: ./src/terraform
+        shell: sh
+        run: |
+          terraform apply plan.tfplan
+          version: ${{ needs.extract-environment-name.outputs.version }}
+          program-name: ${{ needs.extract-environment-name.outputs.program-name}}
+          product-owner: ${{ needs.extract-environment-name.outputs.product-owner }}
+          reader-group-id: ${{ needs.extract-environment-name.outputs.reader-group-id }}
