@@ -1,0 +1,57 @@
+main:
+    params: [input]
+    steps:
+        - set_parameters:
+            assign:
+                - project_id: $${sys.get_env("GOOGLE_CLOUD_PROJECT_ID")}
+                - bucket_name: $${input.bucket_name}
+                - region: $${sys.get_env("GOOGLE_CLOUD_LOCATION")}
+                - cf_name: $${input.function_name}
+        - get_secret:
+            call: googleapis.secretmanager.v1.projects.secrets.versions.accessString
+            args:
+                secret_id: "python_bq"
+                project_id: $${project_id}
+            result: secret_result
+        - trigger_cf:
+            try:
+                call: http.post
+                args:
+                    url: $${"https://" + region + "-" + project_id + ".cloudfunctions.net/" + cf_name}
+                    body:
+                        env_name: $${project_id}
+                        region: $${region}
+                        bucket_name: $${bucket_name}
+                        key_file: $${secret_result}
+                    headers:
+                        Content-Type: "application/json"
+                    auth:
+                        type: OIDC
+                    timeout: 1800
+                result: pipeline_id
+            retry:
+                max_retries: 3
+                backoff:
+                    initial_delay: 600
+                    max_delay: 4500
+                    multiplier: 2
+        - get_state:
+            call: http.get
+            args:
+                url: $${"https://" + region + "-aiplatform.googleapis.com/v1/projects/" + project_id + "/locations/" + region + "/pipelineJobs/" + pipeline_id.body}
+                auth:
+                    type: OAuth2
+            result: pipeline_state
+        - check_if_job_complete:
+            switch:
+                - condition: $${pipeline_state.body.state == "PIPELINE_STATE_SUCCEEDED"}
+                  return: $${pipeline_state.body.state}
+                - condition: $${pipeline_state.body.state == "PIPELINE_STATE_FAILED"}
+                  return: $${pipeline_state.body.state}
+                - condition: $${pipeline_state.body.state == "PIPELINE_STATE_CANCELLED"}
+                  return: $${pipeline_state.body.state}
+        - wait:
+            call: sys.sleep
+            args:
+                seconds: 600
+            next: get_state
